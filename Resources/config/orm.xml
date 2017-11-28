@@ -20,7 +20,13 @@
         <parameter key="doctrine.orm.cache.memcached_host">localhost</parameter>
         <parameter key="doctrine.orm.cache.memcached_port">11211</parameter>
         <parameter key="doctrine.orm.cache.memcached_instance.class">Memcached</parameter>
+        <parameter key="doctrine.orm.cache.redis.class">Doctrine\Common\Cache\RedisCache</parameter>
+        <parameter key="doctrine.orm.cache.redis_host">localhost</parameter>
+        <parameter key="doctrine.orm.cache.redis_port">6379</parameter>
+        <parameter key="doctrine.orm.cache.redis_instance.class">Redis</parameter>
         <parameter key="doctrine.orm.cache.xcache.class">Doctrine\Common\Cache\XcacheCache</parameter>
+        <parameter key="doctrine.orm.cache.wincache.class">Doctrine\Common\Cache\WinCacheCache</parameter>
+        <parameter key="doctrine.orm.cache.zenddata.class">Doctrine\Common\Cache\ZendDataCache</parameter>
 
         <!-- metadata -->
         <parameter key="doctrine.orm.metadata.driver_chain.class">Doctrine\ORM\Mapping\Driver\DriverChain</parameter>
@@ -42,6 +48,13 @@
 
         <!-- security -->
         <parameter key="doctrine.orm.security.user.provider.class">Symfony\Bridge\Doctrine\Security\User\EntityUserProvider</parameter>
+
+        <!-- listeners -->
+        <parameter key="doctrine.orm.listeners.resolve_target_entity.class">Doctrine\ORM\Tools\ResolveTargetEntityListener</parameter>
+
+        <!-- naming strategy -->
+        <parameter key="doctrine.orm.naming_strategy.default.class">Doctrine\ORM\Mapping\DefaultNamingStrategy</parameter>
+        <parameter key="doctrine.orm.naming_strategy.underscore.class">Doctrine\ORM\Mapping\UnderscoreNamingStrategy</parameter>
     </parameters>
 
     <services>
@@ -87,5 +100,12 @@
         <service id="doctrine.orm.security.user.provider" class="%doctrine.orm.security.user.provider.class%" abstract="true" public="false">
             <argument type="service" id="doctrine" />
         </service>
+
+        <!-- listeners -->
+        <service id="doctrine.orm.listeners.resolve_target_entity" class="%doctrine.orm.listeners.resolve_target_entity.class%" public="false" />
+
+        <!-- naming strategy -->
+        <service id="doctrine.orm.naming_strategy.default" class="%doctrine.orm.naming_strategy.default.class%" public="false" />
+        <service id="doctrine.orm.naming_strategy.underscore" class="%doctrine.orm.naming_strategy.underscore.class%" public="false" />
     </services>
 </container>

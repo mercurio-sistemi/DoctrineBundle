@@ -27,6 +27,9 @@ use Doctrine\DBAL\DriverManager;
  */
 class CreateDatabaseDoctrineCommand extends DoctrineCommand
 {
+    /**
+     * {@inheritDoc}
+     */
     protected function configure()
     {
         $this
@@ -47,6 +50,9 @@ EOT
         );
     }
 
+    /**
+     * {@inheritDoc}
+     */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         $connection = $this->getDoctrineConnection($input->getOption('connection'));
@@ -58,14 +64,23 @@ EOT
 
         $tmpConnection = DriverManager::getConnection($params);
 
+        // Only quote if we don't have a path
+        if (!isset($params['path'])) {
+            $name = $tmpConnection->getDatabasePlatform()->quoteSingleIdentifier($name);
+        }
+
+        $error = false;
         try {
-            $tmpConnection->getSchemaManager()->createDatabase($tmpConnection->getDatabasePlatform()->quoteSingleIdentifier($name));
+            $tmpConnection->getSchemaManager()->createDatabase($name);
             $output->writeln(sprintf('<info>Created database for connection named <comment>%s</comment></info>', $name));
         } catch (\Exception $e) {
             $output->writeln(sprintf('<error>Could not create database for connection named <comment>%s</comment></error>', $name));
             $output->writeln(sprintf('<error>%s</error>', $e->getMessage()));
+            $error = true;
         }
 
         $tmpConnection->close();
+
+        return $error ? 1 : 0;
     }
 }

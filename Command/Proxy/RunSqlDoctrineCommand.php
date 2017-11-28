@@ -28,6 +28,9 @@ use Doctrine\DBAL\Tools\Console\Command\RunSqlCommand;
  */
 class RunSqlDoctrineCommand extends RunSqlCommand
 {
+    /**
+     * {@inheritDoc}
+     */
     protected function configure()
     {
         parent::configure();
@@ -36,7 +39,7 @@ class RunSqlDoctrineCommand extends RunSqlCommand
             ->setName('doctrine:query:sql')
             ->addOption('connection', null, InputOption::VALUE_OPTIONAL, 'The connection to use for this command')
             ->setHelp(<<<EOT
-The <info>doctrine:query:sql</info> command executes the given DQL query and
+The <info>doctrine:query:sql</info> command executes the given SQL query and
 outputs the results:
 
 <info>php app/console doctrine:query:sql "SELECT * from user"</info>
@@ -44,6 +47,9 @@ EOT
         );
     }
 
+    /**
+     * {@inheritDoc}
+     */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         DoctrineCommandHelper::setApplicationConnection($this->getApplication(), $input->getOption('connection'));

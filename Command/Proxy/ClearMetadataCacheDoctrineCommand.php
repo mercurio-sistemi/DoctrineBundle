@@ -27,13 +27,16 @@ use Doctrine\ORM\Tools\Console\Command\ClearCache\MetadataCommand;
  */
 class ClearMetadataCacheDoctrineCommand extends MetadataCommand
 {
+    /**
+     * {@inheritDoc}
+     */
     protected function configure()
     {
         parent::configure();
 
         $this
             ->setName('doctrine:cache:clear-metadata')
-            ->setDescription('Clears all metadata cache for a entity manager')
+            ->setDescription('Clears all metadata cache for an entity manager')
             ->addOption('em', null, InputOption::VALUE_OPTIONAL, 'The entity manager to use for this command')
             ->setHelp(<<<EOT
 The <info>doctrine:cache:clear-metadata</info> command clears all metadata
@@ -49,6 +52,9 @@ EOT
         );
     }
 
+    /**
+     * {@inheritDoc}
+     */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         DoctrineCommandHelper::setApplicationEntityManager($this->getApplication(), $input->getOption('em'));
