@@ -41,9 +41,7 @@ class Configuration implements ConfigurationInterface
     }
 
     /**
-     * Generates the configuration tree builder.
-     *
-     * @return \Symfony\Component\Config\Definition\Builder\TreeBuilder The tree builder
+     * {@inheritDoc}
      */
     public function getConfigTreeBuilder()
     {
@@ -56,6 +54,11 @@ class Configuration implements ConfigurationInterface
         return $treeBuilder;
     }
 
+    /**
+     * Add DBAL section to configuration tree
+     *
+     * @param ArrayNodeDefinition $node
+     */
     private function addDbalSection(ArrayNodeDefinition $node)
     {
         $node
@@ -105,6 +108,11 @@ class Configuration implements ConfigurationInterface
         ;
     }
 
+    /**
+     * Return the dbal connections node
+     *
+     * @return ArrayNodeDefinition
+     */
     private function getDbalConnectionsNode()
     {
         $treeBuilder = new TreeBuilder();
@@ -126,10 +134,12 @@ class Configuration implements ConfigurationInterface
             ->children()
                 ->scalarNode('driver')->defaultValue('pdo_mysql')->end()
                 ->scalarNode('platform_service')->end()
+                ->scalarNode('schema_filter')->end()
                 ->booleanNode('logging')->defaultValue($this->debug)->end()
                 ->booleanNode('profiling')->defaultValue($this->debug)->end()
                 ->scalarNode('driver_class')->end()
                 ->scalarNode('wrapper_class')->end()
+                ->booleanNode('keep_slave')->end()
                 ->arrayNode('options')
                     ->useAttributeAsKey('key')
                     ->prototype('scalar')->end()
@@ -157,7 +167,7 @@ class Configuration implements ConfigurationInterface
      *
      * These keys are available for slave configurations too.
      *
-     * @param \Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition $node
+     * @param ArrayNodeDefinition $node
      */
     private function configureDbalDriverNode(ArrayNodeDefinition $node)
     {
@@ -171,15 +181,15 @@ class Configuration implements ConfigurationInterface
                 ->scalarNode('charset')->end()
                 ->scalarNode('path')->end()
                 ->booleanNode('memory')->end()
-                ->scalarNode('unix_socket')->setInfo('The unix socket to use for MySQL')->end()
-                ->booleanNode('persistent')->setInfo('True to use as persistent connection for the ibm_db2 driver')->end()
-                ->scalarNode('protocol')->setInfo('The protocol to use for the ibm_db2 driver (default to TCPIP if ommited)')->end()
-                ->booleanNode('service')->setInfo('True to use dbname as service name instead of SID for Oracle')->end()
+                ->scalarNode('unix_socket')->info('The unix socket to use for MySQL')->end()
+                ->booleanNode('persistent')->info('True to use as persistent connection for the ibm_db2 driver')->end()
+                ->scalarNode('protocol')->info('The protocol to use for the ibm_db2 driver (default to TCPIP if ommited)')->end()
+                ->booleanNode('service')->info('True to use dbname as service name instead of SID for Oracle')->end()
                 ->scalarNode('sessionMode')
-                    ->setInfo('The session mode to use for the oci8 driver')
+                    ->info('The session mode to use for the oci8 driver')
                 ->end()
-                ->booleanNode('pooled')->setInfo('True to use a pooled server with the oci8 driver')->end()
-                ->booleanNode('MultipleActiveResultSets')->setInfo('Configuring MultipleActiveResultSets for the pdo_sqlsrv driver')->end()
+                ->booleanNode('pooled')->info('True to use a pooled server with the oci8 driver')->end()
+                ->booleanNode('MultipleActiveResultSets')->info('Configuring MultipleActiveResultSets for the pdo_sqlsrv driver')->end()
             ->end()
             ->beforeNormalization()
                 ->ifTrue(function($v) {return !isset($v['sessionMode']) && isset($v['session_mode']);})
@@ -202,6 +212,11 @@ class Configuration implements ConfigurationInterface
         ;
     }
 
+    /**
+     * Add the ORM section to configuration tree
+     *
+     * @param ArrayNodeDefinition $node
+     */
     private function addOrmSection(ArrayNodeDefinition $node)
     {
         $node
@@ -214,7 +229,8 @@ class Configuration implements ConfigurationInterface
                             // Key that should not be rewritten to the connection config
                             $excludedKeys = array(
                                 'default_entity_manager' => true, 'auto_generate_proxy_classes' => true,
-                                'proxy_dir' => true, 'proxy_namespace' => true,
+                                'proxy_dir' => true, 'proxy_namespace' => true, 'resolve_target_entities' => true,
+                                'resolve_target_entity' => true,
                             );
                             $entityManager = array();
                             foreach ($v as $key => $value) {
@@ -238,11 +254,38 @@ class Configuration implements ConfigurationInterface
                     ->end()
                     ->fixXmlConfig('entity_manager')
                     ->append($this->getOrmEntityManagersNode())
+                    ->fixXmlConfig('resolve_target_entity', 'resolve_target_entities')
+                    ->append($this->getOrmTargetEntityResolverNode())
                 ->end()
             ->end()
         ;
     }
 
+    /**
+     * Return ORM target entity resolver node
+     *
+     * @return \Symfony\Component\Config\Definition\Builder\NodeDefinition
+     */
+    private function getOrmTargetEntityResolverNode()
+    {
+        $treeBuilder = new TreeBuilder();
+        $node = $treeBuilder->root('resolve_target_entities');
+
+        $node
+            ->useAttributeAsKey('interface')
+            ->prototype('scalar')
+                ->cannotBeEmpty()
+            ->end()
+        ;
+
+        return $node;
+    }
+
+    /**
+     * Return ORM entity manager node
+     *
+     * @return ArrayNodeDefinition
+     */
     private function getOrmEntityManagersNode()
     {
         $treeBuilder = new TreeBuilder();
@@ -261,6 +304,7 @@ class Configuration implements ConfigurationInterface
                     ->scalarNode('class_metadata_factory_name')->defaultValue('Doctrine\ORM\Mapping\ClassMetadataFactory')->end()
                     ->scalarNode('default_repository_class')->defaultValue('Doctrine\ORM\EntityRepository')->end()
                     ->scalarNode('auto_mapping')->defaultFalse()->end()
+                    ->scalarNode('naming_strategy')->defaultValue('doctrine.orm.naming_strategy.default')->end()
                 ->end()
                 ->fixXmlConfig('hydrator')
                 ->children()
@@ -314,7 +358,7 @@ class Configuration implements ConfigurationInterface
                 ->fixXmlConfig('filter')
                 ->children()
                     ->arrayNode('filters')
-                        ->setInfo('Register SQL Filters in the entity manager')
+                        ->info('Register SQL Filters in the entity manager')
                         ->useAttributeAsKey('name')
                         ->prototype('array')
                             ->beforeNormalization()
@@ -344,6 +388,13 @@ class Configuration implements ConfigurationInterface
         return $node;
     }
 
+    /**
+     * Return a ORM cache driver node for an given entity manager
+     *
+     * @param string $name
+     *
+     * @return ArrayNodeDefinition
+     */
     private function getOrmCacheDriverNode($name)
     {
         $treeBuilder = new TreeBuilder();
@@ -356,7 +407,7 @@ class Configuration implements ConfigurationInterface
                 ->then(function($v) { return array('type' => $v); })
             ->end()
             ->children()
-                ->scalarNode('type')->defaultValue('array')->isRequired()->end()
+                ->scalarNode('type')->defaultValue('array')->end()
                 ->scalarNode('host')->end()
                 ->scalarNode('port')->end()
                 ->scalarNode('instance_class')->end()

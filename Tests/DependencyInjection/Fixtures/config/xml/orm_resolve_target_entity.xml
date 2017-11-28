@@ -7,8 +7,12 @@
                         http://symfony.com/schema/dic/doctrine http://symfony.com/schema/dic/doctrine/doctrine-1.0.xsd">
 
     <config>
-        <dbal dbname="mysql_db" user="mysql_user" password="mysql_s3cr3t" unix-socket="/path/to/mysqld.sock" keep-slave="true">
-            <slave name="slave1" dbname="slave_db" user="slave_user" password="slave_s3cr3t" unix-socket="/path/to/mysqld_slave.sock" />
+        <dbal default-connection="default">
+            <connection name="default" dbname="db" />
         </dbal>
+
+        <orm default-entity-manager="default">
+            <resolve-target-entity interface="Symfony\Component\Security\Core\User\UserInterface">MyUserClass</resolve-target-entity>
+        </orm>
     </config>
 </srv:container>

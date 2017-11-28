@@ -14,6 +14,7 @@
 
 namespace Doctrine\Bundle\DoctrineBundle;
 
+use Doctrine\Common\Util\ClassUtils;
 use Doctrine\Bundle\DoctrineBundle\Command\CreateDatabaseDoctrineCommand;
 use Doctrine\Bundle\DoctrineBundle\Command\DropDatabaseDoctrineCommand;
 use Doctrine\Bundle\DoctrineBundle\Command\Proxy\RunSqlDoctrineCommand;
@@ -35,6 +36,9 @@ class DoctrineBundle extends Bundle
 {
     private $autoloader;
 
+    /**
+     * {@inheritDoc}
+     */
     public function build(ContainerBuilder $container)
     {
         parent::build($container);
@@ -47,6 +51,9 @@ class DoctrineBundle extends Bundle
         $container->addCompilerPass(new DoctrineValidationPass('orm'));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function boot()
     {
         // Register an autoloader for proxies to avoid issues when unserializing them
@@ -60,43 +67,44 @@ class DoctrineBundle extends Bundle
 
             $this->autoloader = function($class) use ($namespace, $dir, &$container) {
                 if (0 === strpos($class, $namespace)) {
-                    $className = str_replace('\\', '', substr($class, strlen($namespace) +1));
-                    $file = $dir.DIRECTORY_SEPARATOR.$className.'.php';
+                    $fileName = str_replace('\\', '', substr($class, strlen($namespace) +1));
+                    $file = $dir.DIRECTORY_SEPARATOR.$fileName.'.php';
 
-                    if (!is_file($file) && $container->getParameter('kernel.debug')) {
-                        $originalClassName = substr($className, 0, -5);
+                    if (!is_file($file) && $container->getParameter('doctrine.orm.auto_generate_proxy_classes')) {
+                        $originalClassName = ClassUtils::getRealClass($class);
+                        /** @var $registry Registry */
                         $registry = $container->get('doctrine');
 
                         // Tries to auto-generate the proxy file
+                        /** @var $em \Doctrine\ORM\EntityManager */
                         foreach ($registry->getManagers() as $em) {
 
                             if ($em->getConfiguration()->getAutoGenerateProxyClasses()) {
                                 $classes = $em->getMetadataFactory()->getAllMetadata();
 
-                                foreach ($classes as $class) {
-                                    $name = str_replace('\\', '', $class->name);
-
-                                    if ($name == $originalClassName) {
-                                        $em->getProxyFactory()->generateProxyClasses(array($class));
+                                foreach ($classes as $classMetadata) {
+                                    if ($classMetadata->name == $originalClassName) {
+                                        $em->getProxyFactory()->generateProxyClasses(array($classMetadata));
                                     }
                                 }
                             }
                         }
 
-                        clearstatcache($file);
-
-                        if (!is_file($file)) {
-                            throw new \RuntimeException(sprintf('The proxy file "%s" does not exist. If you still have objects serialized in the session, you need to clear the session manually.', $file));
-                        }
+                        clearstatcache(true, $file);
                     }
 
-                    require $file;
+                    if (file_exists($file)) {
+                        require $file;
+                    }
                 }
             };
             spl_autoload_register($this->autoloader);
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function shutdown()
     {
         if (null !== $this->autoloader) {
@@ -105,6 +113,9 @@ class DoctrineBundle extends Bundle
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function registerCommands(Application $application)
     {
         // Use the default logic when the ORM is available.

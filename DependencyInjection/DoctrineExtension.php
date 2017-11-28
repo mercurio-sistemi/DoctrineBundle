@@ -32,6 +32,12 @@ use Symfony\Component\Config\FileLocator;
  */
 class DoctrineExtension extends AbstractDoctrineExtension
 {
+    private $defaultConnection;
+    private $entityManagers;
+
+    /**
+     * {@inheritDoc}
+     */
     public function load(array $configs, ContainerBuilder $container)
     {
         $configuration = $this->getConfiguration($configs, $container);
@@ -117,6 +123,12 @@ class DoctrineExtension extends AbstractDoctrineExtension
         }
         unset($connection['profiling']);
 
+        if (isset($connection['schema_filter']) && $connection['schema_filter']) {
+            $configuration->addMethodCall('setFilterSchemaAssetsExpression', array($connection['schema_filter']));
+        }
+
+        unset($connection['schema_filter']);
+
         if ($logger) {
             $configuration->addMethodCall('setSQLLogger', array($logger));
         }
@@ -125,7 +137,8 @@ class DoctrineExtension extends AbstractDoctrineExtension
         $def = $container->setDefinition(sprintf('doctrine.dbal.%s_connection.event_manager', $name), new DefinitionDecorator('doctrine.dbal.connection.event_manager'));
 
         // connection
-        if (isset($connection['charset'])) {
+        // PDO ignores the charset property before 5.3.6 so the init listener has to be used instead.
+        if (isset($connection['charset']) && version_compare(PHP_VERSION, '5.3.6', '<')) {
             if ((isset($connection['driver']) && stripos($connection['driver'], 'mysql') !== false) ||
                  (isset($connection['driver_class']) && stripos($connection['driver_class'], 'mysql') !== false)) {
                 $mysqlSessionInit = new Definition('%doctrine.dbal.events.mysql_session_init.class%');
@@ -165,9 +178,10 @@ class DoctrineExtension extends AbstractDoctrineExtension
         unset($options['mapping_types']);
 
         foreach (array(
-            'options' => 'driverOptions',
-            'driver_class' => 'driverClass',
+            'options'       => 'driverOptions',
+            'driver_class'  => 'driverClass',
             'wrapper_class' => 'wrapperClass',
+            'keep_slave'    => 'keepSlave',
         ) as $old => $new) {
             if (isset($options[$old])) {
                 $options[$new] = $options[$old];
@@ -177,7 +191,8 @@ class DoctrineExtension extends AbstractDoctrineExtension
 
         if (!empty($options['slaves'])) {
             $nonRewrittenKeys = array(
-                'driver' => true, 'driverOptions' => true, 'driverClass' => true, 'wrapperClass' => true,
+                'driver' => true, 'driverOptions' => true, 'driverClass' => true,
+                'wrapperClass' => true, 'keepSlave' => true,
                 'platform' => true, 'slaves' => true, 'master' => true,
                 // included by safety but should have been unset already
                 'logging' => true, 'profiling' => true, 'mapping_types' => true, 'platform_service' => true,
@@ -240,6 +255,17 @@ class DoctrineExtension extends AbstractDoctrineExtension
             $entityManager['name'] = $name;
             $this->loadOrmEntityManager($entityManager, $container);
         }
+
+        if ($config['resolve_target_entities']) {
+            $def = $container->findDefinition('doctrine.orm.listeners.resolve_target_entity');
+            foreach ($config['resolve_target_entities'] as $name => $implementation) {
+                $def->addMethodCall('addResolveTargetEntity', array(
+                    $name, $implementation, array()
+                ));
+            }
+
+            $def->addTag('doctrine.event_listener', array('event' => 'loadClassMetadata'));
+        }
     }
     
 	protected function collectAutoMappings(array $entityManagerConfigs, ContainerBuilder $container){
@@ -264,8 +290,8 @@ class DoctrineExtension extends AbstractDoctrineExtension
     /**
      * Loads a configured ORM entity manager.
      *
-     * @param array $entityManager A configured ORM entity manager.
-     * @param ContainerBuilder $container A ContainerBuilder instance
+     * @param array            $entityManager A configured ORM entity manager.
+     * @param ContainerBuilder $container     A ContainerBuilder instance
      */
     protected function loadOrmEntityManager(array $entityManager, ContainerBuilder $container)
     {
@@ -285,6 +311,12 @@ class DoctrineExtension extends AbstractDoctrineExtension
             'setClassMetadataFactoryName' => $entityManager['class_metadata_factory_name'],
             'setDefaultRepositoryClassName' => $entityManager['default_repository_class'],
         );
+        // check for version to keep BC
+        if (version_compare(\Doctrine\ORM\Version::VERSION, "2.3.0-DEV") >= 0) {
+            $methods = array_merge($methods, array(
+                'setNamingStrategy'       => new Reference($entityManager['naming_strategy']),
+            ));
+        }
         foreach ($methods as $method => $arg) {
             $ormConfigDef->addMethodCall($method, array($arg));
         }
@@ -383,6 +415,9 @@ class DoctrineExtension extends AbstractDoctrineExtension
         $ormConfigDef->addMethodCall('setEntityNamespaces', array($this->aliasMap));
     }
 
+    /**
+     * {@inheritDoc}
+     */
     protected function getObjectManagerElementName($name)
     {
         return 'doctrine.orm.'.$name;
@@ -393,11 +428,17 @@ class DoctrineExtension extends AbstractDoctrineExtension
         return 'Entity';
     }
 
+    /**
+     * {@inheritDoc}
+     */
     protected function getMappingResourceConfigDirectory()
     {
         return 'Resources/config/doctrine';
     }
 
+    /**
+     * {@inheritDoc}
+     */
     protected function getMappingResourceExtension()
     {
         return 'orm';
@@ -411,91 +452,13 @@ class DoctrineExtension extends AbstractDoctrineExtension
      */
     protected function loadOrmCacheDrivers(array $entityManager, ContainerBuilder $container)
     {
-        $this->loadOrmEntityManagerCacheDriver($entityManager, $container, 'metadata_cache');
-        $this->loadOrmEntityManagerCacheDriver($entityManager, $container, 'result_cache');
-        $this->loadOrmEntityManagerCacheDriver($entityManager, $container, 'query_cache');
+        $this->loadObjectManagerCacheDriver($entityManager, $container, 'metadata_cache');
+        $this->loadObjectManagerCacheDriver($entityManager, $container, 'result_cache');
+        $this->loadObjectManagerCacheDriver($entityManager, $container, 'query_cache');
     }
 
     /**
-     * Loads a configured entity managers metadata, query or result cache driver.
-     *
-     * @param array            $entityManager A configured ORM entity manager.
-     * @param ContainerBuilder $container A ContainerBuilder instance
-     * @param string           $cacheName
-     */
-    protected function loadOrmEntityManagerCacheDriver(array $entityManager, ContainerBuilder $container, $cacheName)
-    {
-        $cacheDriverService = sprintf('doctrine.orm.%s_%s', $entityManager['name'], $cacheName);
-
-        $driver = $cacheName."_driver";
-        $cacheDriver = $entityManager[$driver];
-
-        if ('service' === $cacheDriver['type']) {
-            $container->setAlias($cacheDriverService, new Alias($cacheDriver['id'], false));
-        } else {
-            $cacheDef = $this->getEntityManagerCacheDefinition($entityManager, $cacheDriver, $container);
-            $container->setDefinition($cacheDriverService, $cacheDef);
-        }
-    }
-
-    /**
-     * Gets an entity manager cache driver definition for metadata, query and result caches.
-     *
-     * @param array            $entityManager The array configuring an entity manager.
-     * @param array            $cacheDriver The cache driver configuration.
-     * @param ContainerBuilder $container
-     * @return Definition $cacheDef
-     */
-    protected function getEntityManagerCacheDefinition(array $entityManager, $cacheDriver, ContainerBuilder $container)
-    {
-        switch ($cacheDriver['type']) {
-            case 'memcache':
-                $memcacheClass = !empty($cacheDriver['class']) ? $cacheDriver['class'] : '%doctrine.orm.cache.memcache.class%';
-                $memcacheInstanceClass = !empty($cacheDriver['instance_class']) ? $cacheDriver['instance_class'] : '%doctrine.orm.cache.memcache_instance.class%';
-                $memcacheHost = !empty($cacheDriver['host']) ? $cacheDriver['host'] : '%doctrine.orm.cache.memcache_host%';
-                $memcachePort = !empty($cacheDriver['port']) ? $cacheDriver['port'] : '%doctrine.orm.cache.memcache_port%';
-                $cacheDef = new Definition($memcacheClass);
-                $memcacheInstance = new Definition($memcacheInstanceClass);
-                $memcacheInstance->addMethodCall('connect', array(
-                    $memcacheHost, $memcachePort
-                ));
-                $container->setDefinition(sprintf('doctrine.orm.%s_memcache_instance', $entityManager['name']), $memcacheInstance);
-                $cacheDef->addMethodCall('setMemcache', array(new Reference(sprintf('doctrine.orm.%s_memcache_instance', $entityManager['name']))));
-                break;
-            case 'memcached':
-                $memcachedClass = !empty($cacheDriver['class']) ? $cacheDriver['class'] : '%doctrine.orm.cache.memcached.class%';
-                $memcachedInstanceClass = !empty($cacheDriver['instance_class']) ? $cacheDriver['instance_class'] : '%doctrine.orm.cache.memcached_instance.class%';
-                $memcachedHost = !empty($cacheDriver['host']) ? $cacheDriver['host'] : '%doctrine.orm.cache.memcached_host%';
-                $memcachedPort = !empty($cacheDriver['port']) ? $cacheDriver['port'] : '%doctrine.orm.cache.memcached_port%';
-                $cacheDef = new Definition($memcachedClass);
-                $memcachedInstance = new Definition($memcachedInstanceClass);
-                $memcachedInstance->addMethodCall('addServer', array(
-                    $memcachedHost, $memcachedPort
-                ));
-                $container->setDefinition(sprintf('doctrine.orm.%s_memcached_instance', $entityManager['name']), $memcachedInstance);
-                $cacheDef->addMethodCall('setMemcached', array(new Reference(sprintf('doctrine.orm.%s_memcached_instance', $entityManager['name']))));
-                break;
-            case 'apc':
-            case 'array':
-            case 'xcache':
-                $cacheDef = new Definition('%'.sprintf('doctrine.orm.cache.%s.class', $cacheDriver['type']).'%');
-                break;
-            default:
-                throw new \InvalidArgumentException(sprintf('"%s" is an unrecognized Doctrine cache driver.', $cacheDriver['type']));
-        }
-
-        $cacheDef->setPublic(false);
-        // generate a unique namespace for the given application
-        $namespace = 'sf2orm_'.$entityManager['name'].'_'.md5($container->getParameter('kernel.root_dir').$container->getParameter('kernel.environment'));
-        $cacheDef->addMethodCall('setNamespace', array($namespace));
-
-        return $cacheDef;
-    }
-
-    /**
-     * Returns the base path for the XSD files.
-     *
-     * @return string The XSD base path
+     * {@inheritDoc}
      */
     public function getXsdValidationBasePath()
     {
@@ -503,15 +466,16 @@ class DoctrineExtension extends AbstractDoctrineExtension
     }
 
     /**
-     * Returns the namespace to be used for this extension (XML namespace).
-     *
-     * @return string The XML namespace
+     * {@inheritDoc}
      */
     public function getNamespace()
     {
         return 'http://symfony.com/schema/dic/doctrine';
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function getConfiguration(array $config, ContainerBuilder $container)
     {
         return new Configuration($container->getParameter('kernel.debug'));
